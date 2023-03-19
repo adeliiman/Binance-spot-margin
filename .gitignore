@@ -1,0 +1,8 @@
+__pycache__
+/instance
+ByBit.db
+Binance.db
+/venv
+test.py 
+webhook_message.txt
+webhook.py 
