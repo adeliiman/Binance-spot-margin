@@ -49,8 +49,8 @@ class Binance:
                                             sideEffectType="MARGIN_BUY")
             elif method=='ticker_price':
                 res = client.ticker_price(symbol=kwargs.get('symbol'))
-                res = res['price']
-            
+                res = float(res['price'])
+
         except Exception as e:
             return {"success": False,"error": str(e)}
 
@@ -67,6 +67,7 @@ class Binance:
             pos.price = kwargs.get('price')
             pos.stgNumber = kwargs.get('stgNumber')
             pos.status = 'entry'
+            pos.valueOpen = round(kwargs.get('valueOpen'),1)
             db.session.add(pos)
             db.session.commit()
 
@@ -79,6 +80,7 @@ class Binance:
              position.status = 'close'
              position.timeExit = kwargs.get('time')
              position.priceExit = kwargs.get('price')
+             position.valueClose = kwargs.get('valueClose')
              db.session.commit()
 
 
@@ -163,35 +165,35 @@ def handle_webhook(payload: dict):
     with app.app_context():
         position = db.session.execute(db.select(Position).where(Position.symbol==symbol).where(Position.stgNumber==stgNumber ).order_by(Position.id.desc())).scalar()
 
-    if not position and ('Exit' not in orderId):
+    if ((not position) or position.status=='close') and ('Exit' not in orderId):
         # new position
-        #price = binance._try_request(method='ticker_price', symbol=symbol)
-        qty = round(binance.risk/float(price), 4)
+        if not position:
+            valueOpen = binance.risk
+            qty = round(binance.risk/float(price), 4)
+        elif position.status=='close':
+            valueOpen = position.valueClose
+            qty = valueOpen / binance._try_request(method='ticker_price', symbol=symbol)
         res = binance._try_request(method='new_order', symbol=symbol, side=side, quantity=qty)
         print(res)
         # DB
-        binance.intoDB(symbol=symbol, side=side, time=now, qty=qty, price=price, stgNumber=stgNumber )
-    elif position: # we have position
-        if side != position.side and position.status=='entry':
-            # exit position
-            qty_pos = position.qty
+        binance.intoDB(symbol=symbol, side=side, time=now, qty=qty, price=price, stgNumber=stgNumber, valueOpen=valueOpen )
+    elif position.status=="entry" and side != position.side: # we have entry position
+        qty_pos = position.qty
+        # exit position
+        res = binance._try_request(method='new_order', symbol=symbol, side=side, quantity=qty_pos)
+        print(res)
+        print(binance._try_request(method='ticker_price', symbol=symbol))
+        valueClose = qty_pos * binance._try_request(method='ticker_price', symbol=symbol)
+        # DB
+        binance.updateDB(symbol=symbol, time=now, price=price, stgNumber=stgNumber, valueClose=valueClose)
+        if ('Exit' not in orderId):
+            # new position
             res = binance._try_request(method='new_order', symbol=symbol, side=side, quantity=qty_pos)
             print(res)
             # DB
-            binance.updateDB(symbol=symbol, time=now, price=price, stgNumber=stgNumber )
-            if ('Exit' not in orderId):
-                # new position
-                res = binance._try_request(method='new_order', symbol=symbol, side=side, quantity=qty_pos)
-                print(res)
-                # DB
-                binance.intoDB(symbol=symbol, side=side, time=now, qty=qty, price=price, stgNumber=stgNumber )
-        elif side != position.side:
-            res = binance._try_request(method='new_order', symbol=symbol, side=side, quantity=qty_pos)
-            print(res)
-            # DB
-            binance.intoDB(symbol=symbol, side=side, time=now, qty=qty, price=price, stgNumber=stgNumber )
+            valueOpen = valueClose
+            binance.intoDB(symbol=symbol, side=side, time=now, qty=qty_pos, price=price, stgNumber=stgNumber, valueOpen=valueOpen)
 
 
 
 
-    
